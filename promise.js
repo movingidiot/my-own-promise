@@ -3,18 +3,22 @@ function syncTask(func, ...args) {
     setTimeout(func, 0, args);
 }
 
-function resolutionProcedureFactory(resolvedPromise, toResolve, toReject) {
+function resolutionProcedureFactory(targetPromise, toResolve, toReject) {
     const resolutionProcedure = (value) => {
-        if (resolvingPromise === value) {
-            toReject(new TypeError('not allowed to return father promise'));
+        if (targetPromise === value) {
+            toReject(new TypeError('not allowed to return self promise'));
         } else
             if (typeof value === 'object' || typeof value === 'function') {
-                if (isPromise(value)) {
-                    value.then(toResolve, toReject);
-                } else
-                    if (typeof value.then === 'function')
+                let then;
+                try {
+                    then = value.then;
+                } catch (err) {
+                    toReject(err);
+                    return;
+                }
+                    if (typeof then === 'function')
                         try {
-                            value.then.call(value, y => resolutionProcedure(y), r => toReject(r));
+                            then.call(value, y => resolutionProcedure(y), r => toReject(r));
                         } catch (err) {
                             toReject(err);
                         }
@@ -41,11 +45,6 @@ class Promise{
                 self.state = 'fulfilled';
                 self.value = value;
                 self.broadcast(onFulfilled,value);
-                /*syncTask(function() {
-                    onFulfilled.forEach(function (func) {
-                        func(value);
-                    });
-                });*/    
             } else {
                 //throw new Error('this promise has finished');
             }
@@ -73,10 +72,11 @@ class Promise{
             res = resolve;
             rej = reject;
         });
+        const resolutionProcedure = resolutionProcedureFactory(ans, res, rej);
         const wrapOnFulfilled = function (value) {
             if (typeof onFulfilled === 'function')
                 try {
-                    res(onFulfilled(value));
+                    resolutionProcedure(onFulfilled(value));
                 }
                 catch (err) {
                     rej(err);
@@ -87,13 +87,14 @@ class Promise{
         const wrapOnRejected = function (value) {
             if (typeof onRejected === 'function')
                 try {
-                    res(onRejected(value));
+                    resolutionProcedure(onRejected(value));
                 } catch (err) {
                     rej(err);
                 }    
             else
                 rej(value);
         }
+        
         if (this.state === 'fulfilled')
             this.broadcast([wrapOnFulfilled], this.value);
         else
@@ -162,6 +163,19 @@ promise.then(null, function () {
 });
 */
 
+const promise = new Promise((resolve, reject) => resolve(123));
+promise.then((value) => {
+    return {
+        then: (onRes, onRej) => {
+            onRes('asdf');
+        }
+    }
+}, () => {
+    
+});
+
+
+/*
 test(adapter, function (err) {
     console.dir(err);
-});
+});*/
