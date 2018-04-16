@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/node": "^9.6.5",
     "promises-aplus-tests": "^2.1.2"
   }
 }

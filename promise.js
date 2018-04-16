@@ -3,15 +3,24 @@ const symbols = {
     value: Symbol('PromiseValue'),
 };
 
-function syncTask(func, ...args) {
-    process.nextTick(func, args);
-    //setTimeout(func, 0, args);
+function asyncTask(func, ...args) {
+    const asyncFunc = process.nextTick || setImmediate || setTimeout;
+    asyncFunc(func,...asyncFunc === setTimeout && args.unshift(0) && args || args);
+}
+
+function broadcast(funcArr, value) {
+    asyncTask(function () {
+        funcArr.forEach(function (func) {
+            func(value);
+        });
+        funcArr = [];
+    });
 }
 
 function resolutionProcedureFactory(targetPromise, toResolve, toReject) {
-    const resolutionProcedure = (value) => {
+    return function resolutionProcedure(value) {
         if (targetPromise === value) {
-            toReject(new TypeError('not allowed to return self promise'));
+            toReject(new TypeError('Chaining cycle detected for promise'));
         } else
         if (value && (typeof value === 'object' || typeof value === 'function')) {
             let then;
@@ -24,7 +33,7 @@ function resolutionProcedureFactory(targetPromise, toResolve, toReject) {
             if (typeof then === 'function') {
                 let called = false;
                 try {
-                    then.call(value, y => (!called) && (called = true) && resolutionProcedure(y), r => (!called) && (called = true) && toReject(r));
+                    then.call(value, y => (!called) && (called = true) && asyncTask(resolutionProcedure, y), r => (!called) && (called = true) && toReject(r));
                 } catch (err) {
                     (!called) && (called = true) && toReject(err);
                 }
@@ -35,7 +44,6 @@ function resolutionProcedureFactory(targetPromise, toResolve, toReject) {
             toResolve(value);
         }
     }
-    return resolutionProcedure;
 }
 
 class Promise {
@@ -50,7 +58,7 @@ class Promise {
             if (self[symbols.state] === 'pending') {
                 self[symbols.state] = 'fulfilled';
                 self[symbols.value] = value;
-                self.broadcast(onFulfilled, value);
+                broadcast(onFulfilled, value);
             } else {
                 //throw new Error('this promise has finished');
             }
@@ -59,7 +67,7 @@ class Promise {
             if (self[symbols.state] === 'pending') {
                 self[symbols.state] = 'rejected';
                 self[symbols.value] = reason;
-                self.broadcast(onRejected, reason);
+                broadcast(onRejected, reason);
             } else {
                 //throw new Error('this promise has finished');
             }
@@ -100,29 +108,57 @@ class Promise {
                 rej(value);
         }
 
-        if (this[symbols.state] === 'fulfilled')
-            this.broadcast([wrapOnFulfilled], this[symbols.value]);
-        else
-            this.onFulfilled.push(wrapOnFulfilled);
-        if (this[symbols.state] === 'rejected')
-            this.broadcast([wrapOnRejected], this[symbols.value]);
-        else
-            this.onRejected.push(wrapOnRejected);
+        switch (this[symbols.state]) {
+            case 'fulfilled': { broadcast([wrapOnFulfilled], this[symbols.value]); break; }
+            case 'rejected': { broadcast([wrapOnRejected], this[symbols.value]); break; }
+            case 'pending': { this.onFulfilled.push(wrapOnFulfilled); this.onRejected.push(wrapOnRejected); break; }
+        }
+        
         return ans;
     }
 
-    broadcast(funcArr, value) {
-        const self = this;
-        syncTask(function () {
-            funcArr.forEach(function (func) {
-                func(value);
+    catch(onRejected) {
+        return this.then(null, onRejected);
+    }
+
+    static resolve(value) {
+        return new Promise((resolve) => resolve(value));
+    }
+
+    static reject(reason) {
+        return new Promise((resolve, reject) => reject(reason));
+    }
+
+    static race(...promises) {
+        return new Promise((resolve, reject) => {
+            promises.forEach(value => {
+                value.then(resolve, reject);
             });
-            funcArr = [];
         });
     }
+
+    static all(...promises) {
+        return new Promise((resolve, reject) => {
+            const length = promises.length;
+            let count = 0;
+            promises.forEach(element => {
+                element.then((value) => ++count === length && resolve(value), reject);
+            });
+        });
+    }
+
+
 }
 
 const test = require('promises-aplus-tests');
+const tmp = function() {
+    let count = 0;
+    const x = Promise.resolve('asdf');
+    Promise.resolve().then(() => x).then(value => console.log(value), reason => console.log(reason));
+}
+
+tmp();
+//import test from 'promises-aplus-tests';
 const adapter = {
     deferred: function () {
         let resolve, reject;
@@ -137,58 +173,7 @@ const adapter = {
         }
     }
 }
-/*
-const promise = new Promise((resolve, reject) => {
-    setTimeout(reject, 50, 'asdf');
-});
-let count = 0;
-const sentinel = new Object('sentinel');
-const sentinel2 = new Object('sentinel2');
-const sentinel3 = new Object('sentinel3');
-function wake() {
-    console.log(++count);
-}
 
-promise.then(null, function () {
-    return sentinel;
-}).then(function (value) {
-    console.log(value === sentinel);
-});
-
-promise.then(null, function () {
-    throw sentinel2;
-}).then(null, function (reason) {
-    console.log(reason === sentinel2);
-});
-
-promise.then(null, function () {
-    return sentinel3;
-}).then(function (value) {
-    console.log(value === sentinel3);
-});
-*/
-/*
-const promise = new Promise((resolve, reject) => resolve(1));
-promise.then((value) => {
-    const x = {
-        then: function (resolvePromise) {
-            const y = {
-                then: function (onFulfilled) {
-                    onFulfilled({
-                        then: function (onFulfilled) {
-                            setTimeout(onFulfilled, 0, 'asdf');
-                        }
-                    });
-                    throw 'oij';
-                }
-            }
-            resolvePromise(y);
-        }
-    };
-    return x;
-}, () => {
-    console.log(123);
-}).then((value)=>console.log(value));*/
 
 
 
